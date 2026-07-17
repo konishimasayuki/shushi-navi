@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { INITIAL_KOYAKU } from "../lib/seedData";
 import {
   DEMO_PLAYERS,
   DEMO_SHOPS,
@@ -8,15 +9,18 @@ import {
   DEMO_TAGS,
   DEMO_RECORDS,
   DEMO_CASH,
-  INITIAL_KOYAKU,
-} from "../lib/seedData";
+  DEMO_KOYAKU,
+} from "../lib/demoData";
 
 /* ============================================================
    収支管理システム - パチンコ・パチスロ収支管理システム
    出資者(オーナー)が資金提供 → 打ち子がその資金で稼働
    カレンダー / 稼働記録 / 期待値(仕事量) / 現金出納帳 / 貯玉出納帳 / 設定
-   データはUpstash Redis(/api/data経由)で永続化。
-   起動直後はlib/seedDataの初期値を仮表示し、Redisから取得でき次第置き換わる。
+
+   ・オーナーデモ(z/z)ログイン: lib/demoData.js の見本データのみを表示。
+     Upstash Redisには一切アクセスしない、完全なお試しモード。
+   ・管理者(b/b)/打ち子ログイン: Upstash Redis(/api/data経由)の実データを使用。
+     初回は空の状態から始まり、以降の変更は自動でRedisに保存される。
    ============================================================ */
 
 const FONT_CSS = `
@@ -430,53 +434,77 @@ export default function App() {
   const logoutUser = () => {
     setUser(null);
     saveStoredUser(null);
+    refetchRealData(); // ログアウト後の次のログイン判定に備えて実データを取り直す
   };
   /* window.confirm はプレビュー環境でブロックされ動作しないため、アプリ内蔵の確認モーダルを使う */
   const [confirmDialog, setConfirmDialog] = useState(null); // { message, onYes }
   const askConfirm = (message, onYes) => setConfirmDialog({ message, onYes });
   const [tab, setTab] = useState("home");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [players, setPlayers] = useState(DEMO_PLAYERS);
-  const [shops, setShops] = useState(DEMO_SHOPS);
-  const [machines, setMachines] = useState(DEMO_MACHINES);
-  const [tags, setTags] = useState(DEMO_TAGS);
-  const [records, setRecords] = useState(DEMO_RECORDS);
-  const [cashEntries, setCashEntries] = useState(DEMO_CASH);
+  /* 初期値は実運用の「空の状態」。オーナーデモ(z/z)ログイン時だけデモデータに差し替える */
+  const [players, setPlayers] = useState([]);
+  const [shops, setShops] = useState([]);
+  const [machines, setMachines] = useState([]);
+  const [tags, setTags] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [cashEntries, setCashEntries] = useState([]);
   const [koyaku, setKoyaku] = useState(INITIAL_KOYAKU);
   const [toast, setToast] = useState("");
 
-  /* ---------- Upstash Redis連携（/api/data経由） ----------
-     起動直後はlib/seedDataの値を仮表示 → サーバーから取得でき次第上書きする。
-     hydratedRefがtrueになった後の変更だけを自動でサーバーに保存する（初回の取得直後の
-     再保存＝無駄な書き込みを防ぐため） */
+  /* ---------- データの出し分け ----------
+     ・オーナーデモ(z/z): lib/demoData.js のみを表示。Upstashには触れない
+     ・管理者/打ち子: Upstash Redis(/api/data経由)の実データを使用 */
+  const isOwnerDemo = user?.role === "owner";
+  const roleRef = useRef(user?.role);
+  useEffect(() => {
+    roleRef.current = user?.role;
+  }, [user]);
+
   const hydratedRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refetchRealData = () => {
     fetch("/api/data")
       .then((r) => r.json())
       .then((d) => {
-        if (cancelled || !d || d.error) return;
-        if (d.players) setPlayers(d.players);
-        if (d.shops) setShops(d.shops);
-        if (d.machines) setMachines(d.machines);
-        if (d.tags) setTags(d.tags);
-        if (d.records) setRecords(d.records);
-        if (d.cashEntries) setCashEntries(d.cashEntries);
-        if (d.koyaku) setKoyaku(d.koyaku);
+        if (!d || d.error) return;
+        if (roleRef.current === "owner") return; // デモ表示中はRedisの内容を反映しない
+        setPlayers(d.players || []);
+        setShops(d.shops || []);
+        setMachines(d.machines || []);
+        setTags(d.tags || []);
+        setRecords(d.records || []);
+        setCashEntries(d.cashEntries || []);
+        setKoyaku(d.koyaku || INITIAL_KOYAKU);
       })
       .catch((err) => {
         console.error("データの取得に失敗しました（Upstashの環境変数を確認してください）:", err);
       })
       .finally(() => {
-        if (!cancelled) hydratedRef.current = true;
+        hydratedRef.current = true;
       });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  };
+
+  /* 起動時 or ログイン状態(役割)が変わるたびに、オーナーデモ/実データを出し分ける。
+     ログイン前(user=null)は「オーナーではない」扱いになるので、打ち子ログインの
+     照合に必要な実データがここで取得される */
+  useEffect(() => {
+    if (isOwnerDemo) {
+      hydratedRef.current = false; // デモ中はRedisへの自動保存を止める
+      setPlayers(DEMO_PLAYERS);
+      setShops(DEMO_SHOPS);
+      setMachines(DEMO_MACHINES);
+      setTags(DEMO_TAGS);
+      setRecords(DEMO_RECORDS);
+      setCashEntries(DEMO_CASH);
+      setKoyaku(DEMO_KOYAKU);
+    } else {
+      refetchRealData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOwnerDemo]);
 
   const persist = (key, value) => {
+    if (isOwnerDemo) return; // オーナーデモの変更はRedisに保存しない
     if (!hydratedRef.current) return; // 初回取得が終わるまでは保存しない
     fetch("/api/data", {
       method: "POST",
@@ -2541,6 +2569,7 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
     waris: ["", "", "", "", "", ""],
   };
   const [mForm, setMForm] = useState(emptyMForm);
+  const [machineFilter, setMachineFilter] = useState("pachinko"); // 機種一覧の表示切り替え（パチンコ/スロット）
   const [tagName, setTagName] = useState("");
 
   /* --- 打ち子 --- */
@@ -2822,6 +2851,7 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
 
   /* --- 機種管理 --- */
   if (view === "machines") {
+    const filteredMachines = machines.filter((m) => m.kind === machineFilter);
     return (
       <div>
         {backBtn}
@@ -2829,8 +2859,39 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
       <div style={{ fontSize: 11, color: C.sub, margin: "0 2px 8px" }}>
         ボーダーを登録すると、期待値計算で機種名を選んだとき自動入力されます
       </div>
+
+      {/* パチンコ / スロット 切り替え */}
+      <div style={{ display: "flex", background: C.panel, borderRadius: 999, padding: 4, marginBottom: 10 }}>
+        {[
+          { id: "pachinko", label: "パチンコ" },
+          { id: "slot", label: "スロット" },
+        ].map((k) => (
+          <button
+            key={k.id}
+            onClick={() => {
+              setMachineFilter(k.id);
+              setMForm((f) => ({ ...f, kind: k.id }));
+            }}
+            style={{
+              flex: 1,
+              padding: "11px 0",
+              borderRadius: 999,
+              border: "none",
+              background: machineFilter === k.id ? (k.id === "pachinko" ? C.pachi : C.slot) : "transparent",
+              color: machineFilter === k.id ? "#0a0a0a" : C.sub,
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: "pointer",
+              transition: "background 0.15s",
+            }}
+          >
+            {k.label}（{machines.filter((m) => m.kind === k.id).length}）
+          </button>
+        ))}
+      </div>
+
       <Card style={{ padding: 0 }}>
-        {machines.map((m) => (
+        {filteredMachines.map((m) => (
           <div key={m.id} style={rowStyle(false)}>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -2856,6 +2917,11 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
             </button>
           </div>
         ))}
+        {filteredMachines.length === 0 && (
+          <div style={{ padding: 14, fontSize: 13, color: C.sub }}>
+            {machineFilter === "pachinko" ? "パチンコ" : "スロット"}機種はまだ登録がありません
+          </div>
+        )}
         <div style={{ padding: 12, borderTop: `1px solid ${C.line}` }}>
           <input
             value={mForm.name}
