@@ -11,6 +11,7 @@ import {
   DEMO_CASH,
   DEMO_KOYAKU,
 } from "../lib/demoData";
+import { MACHINE_PRESETS } from "../lib/machinePresets";
 
 /* ============================================================
    収支管理システム - パチンコ・パチスロ収支管理システム
@@ -2569,7 +2570,9 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
     waris: ["", "", "", "", "", ""],
   };
   const [mForm, setMForm] = useState(emptyMForm);
+  const [editingMachineId, setEditingMachineId] = useState(null); // 編集中の機種ID(nullなら新規追加モード)
   const [machineFilter, setMachineFilter] = useState("pachinko"); // 機種一覧の表示切り替え（パチンコ/スロット）
+  const [presetQuery, setPresetQuery] = useState(""); // プリセット検索（かな/カタカナ対応）
   const [tagName, setTagName] = useState("");
 
   /* --- 打ち子 --- */
@@ -2626,17 +2629,17 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
   };
 
   /* --- 機種 --- */
-  const addMachine = () => {
+  const saveMachine = () => {
     const name = mForm.name.trim();
     if (!name) {
       alert("機種名を入力してください");
       return;
     }
-    if (machines.some((m) => m.name === name)) {
+    if (machines.some((m) => m.name === name && m.id !== editingMachineId)) {
       alert("同じ機種が既に登録されています");
       return;
     }
-    const base = { id: uid("m"), name, kind: mForm.kind };
+    const base = { id: editingMachineId || uid("m"), name, kind: mForm.kind };
     if (mForm.kind === "pachinko") {
       base.border = num(mForm.border) || "";
       base.oneRProb = num(mForm.oneRProb) || "";
@@ -2647,15 +2650,59 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
       base.stages = st;
       base.waris = mForm.waris.slice(0, st).map((w) => Number(w) || "");
     }
-    setMachines((prev) => [...prev, base]);
+    if (editingMachineId) {
+      setMachines((prev) => prev.map((m) => (m.id === editingMachineId ? base : m)));
+      showToast("機種を更新しました");
+    } else {
+      setMachines((prev) => [...prev, base]);
+      showToast("機種を追加しました");
+    }
     setMForm(emptyMForm);
-    showToast("機種を追加しました");
+    setEditingMachineId(null);
+  };
+  const startEditMachine = (m) => {
+    setMForm({
+      name: m.name,
+      kind: m.kind,
+      border: m.border !== undefined && m.border !== "" ? String(m.border) : "",
+      oneRProb: m.oneRProb !== undefined && m.oneRProb !== "" ? String(m.oneRProb) : "",
+      oneRDedama: m.oneRDedama !== undefined && m.oneRDedama !== "" ? String(m.oneRDedama) : "",
+      sapo: m.sapo !== undefined ? String(m.sapo) : "",
+      stages: m.stages ? String(m.stages) : "6",
+      waris: m.waris ? m.waris.map((w) => (w === "" || w === undefined ? "" : String(w))) : ["", "", "", "", "", ""],
+    });
+    setEditingMachineId(m.id);
+    setMachineFilter(m.kind);
+  };
+  const cancelEditMachine = () => {
+    setMForm(emptyMForm);
+    setEditingMachineId(null);
   };
   const deleteMachine = (id) => {
     askConfirm("この機種をマスタから削除しますか？（既存の稼働記録はそのまま残ります）", () => {
       setMachines((prev) => prev.filter((m) => m.id !== id));
+      if (editingMachineId === id) cancelEditMachine();
       showToast("削除しました");
     });
+  };
+  /* プリセット(現行の実機情報)から機種マスタへ一括追加 */
+  const addFromPreset = (preset, kind) => {
+    if (machines.some((m) => m.name === preset.name)) {
+      showToast("すでに登録済みです");
+      return;
+    }
+    const base = { id: uid("m"), name: preset.name, kind };
+    if (kind === "pachinko") {
+      base.border = preset.border || "";
+      base.oneRProb = preset.oneRProb || "";
+      base.oneRDedama = preset.oneRDedama || "";
+      base.sapo = preset.sapo || 0;
+    } else {
+      base.stages = preset.stages || 6;
+      base.waris = preset.waris || [];
+    }
+    setMachines((prev) => [...prev, base]);
+    showToast(`「${preset.name}」を追加しました`);
   };
 
   /* --- タグ --- */
@@ -2912,9 +2959,14 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
                 </div>
               )}
             </div>
-            <button onClick={() => deleteMachine(m.id)} style={{ ...smallDeleteBtn, marginLeft: 8 }}>
-              削除
-            </button>
+            <div style={{ display: "flex", gap: 6, marginLeft: 8, flexShrink: 0 }}>
+              <button onClick={() => startEditMachine(m)} style={smallDeleteBtn}>
+                編集
+              </button>
+              <button onClick={() => deleteMachine(m.id)} style={smallDeleteBtn}>
+                削除
+              </button>
+            </div>
           </div>
         ))}
         {filteredMachines.length === 0 && (
@@ -2923,6 +2975,9 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
           </div>
         )}
         <div style={{ padding: 12, borderTop: `1px solid ${C.line}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: editingMachineId ? C.gold : C.sub, marginBottom: 6 }}>
+            {editingMachineId ? "機種を編集中" : "新しい機種を手入力で追加"}
+          </div>
           <input
             value={mForm.name}
             onChange={(e) => setMForm((f) => ({ ...f, name: e.target.value }))}
@@ -3009,10 +3064,85 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
             </>
           )}
 
-          <button onClick={addMachine} style={{ ...primaryBtn, marginTop: 10, fontSize: 14, padding: "11px 0", borderRadius: 10 }}>
-            機種を追加する
-          </button>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            {editingMachineId && (
+              <button
+                onClick={cancelEditMachine}
+                style={{
+                  flex: 1,
+                  background: C.panel2,
+                  border: `1px solid ${C.line}`,
+                  borderRadius: 10,
+                  color: C.text,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  padding: "11px 0",
+                  cursor: "pointer",
+                }}
+              >
+                キャンセル
+              </button>
+            )}
+            <button onClick={saveMachine} style={{ ...primaryBtn, flex: 1, fontSize: 14, padding: "11px 0", borderRadius: 10 }}>
+              {editingMachineId ? "更新する" : "機種を追加する"}
+            </button>
+          </div>
         </div>
+      </Card>
+
+      {/* プリセットから追加（現行の実機スペック情報） */}
+      <SectionTitle>プリセットから追加</SectionTitle>
+      <div style={{ fontSize: 11, color: C.sub, margin: "-6px 2px 8px" }}>
+        現行の実機スペック情報（ボーダー・機械割は各種攻略情報をもとにした参考値）から選んで追加できます
+      </div>
+      <Card style={{ padding: 0 }}>
+        <div style={{ padding: 12, borderBottom: `1px solid ${C.line}` }}>
+          <input
+            value={presetQuery}
+            onChange={(e) => setPresetQuery(e.target.value)}
+            placeholder="機種名で検索（かな・カタカナどちらでも可）"
+            style={inputStyle}
+          />
+        </div>
+        {MACHINE_PRESETS[machineFilter]
+          .filter((p) => !presetQuery.trim() || normKana(p.name).includes(normKana(presetQuery)))
+          .map((p, i, arr) => {
+            const already = machines.some((m) => m.name === p.name);
+            return (
+              <div key={p.name} style={rowStyle(i === arr.length - 1)}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{p.name}</div>
+                  <div style={{ fontSize: 10, color: C.sub }}>
+                    {machineFilter === "pachinko"
+                      ? `ボーダー ${p.border} / 1Rトータル 1/${p.oneRProb} / 1R出玉 ${p.oneRDedama}玉`
+                      : `機械割 ${p.waris.filter((w) => num(w) > 0).join(" / ")}%`}
+                  </div>
+                  {p.note && <div style={{ fontSize: 10, color: C.sub, marginTop: 2 }}>{p.note}</div>}
+                </div>
+                <button
+                  onClick={() => addFromPreset(p, machineFilter)}
+                  disabled={already}
+                  style={{
+                    background: already ? C.panel2 : C.gold,
+                    color: already ? C.sub : "#1a1400",
+                    border: "none",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    padding: "8px 14px",
+                    cursor: already ? "default" : "pointer",
+                    marginLeft: 8,
+                    flexShrink: 0,
+                  }}
+                >
+                  {already ? "登録済み" : "追加"}
+                </button>
+              </div>
+            );
+          })}
+        {MACHINE_PRESETS[machineFilter].filter(
+          (p) => !presetQuery.trim() || normKana(p.name).includes(normKana(presetQuery))
+        ).length === 0 && <div style={{ padding: 14, fontSize: 13, color: C.sub }}>該当する機種がありません</div>}
       </Card>
       </div>
     );
