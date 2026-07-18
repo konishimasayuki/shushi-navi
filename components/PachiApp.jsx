@@ -2704,6 +2704,31 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
     setMachines((prev) => [...prev, base]);
     showToast(`「${preset.name}」を追加しました`);
   };
+  /* 表示中のプリセット(検索でフィルタ済みのもの)をまとめて機種マスタへ追加 */
+  const addAllPresets = (list, kind) => {
+    const toAdd = list.filter((p) => !machines.some((m) => m.name === p.name));
+    if (toAdd.length === 0) {
+      showToast("追加できる機種がありません（すべて登録済み）");
+      return;
+    }
+    askConfirm(`${toAdd.length}機種をまとめて機種マスタに追加しますか？`, () => {
+      const newOnes = toAdd.map((preset) => {
+        const base = { id: uid("m"), name: preset.name, kind };
+        if (kind === "pachinko") {
+          base.border = preset.border || "";
+          base.oneRProb = preset.oneRProb || "";
+          base.oneRDedama = preset.oneRDedama || "";
+          base.sapo = preset.sapo || 0;
+        } else {
+          base.stages = preset.stages || 6;
+          base.waris = preset.waris || [];
+        }
+        return base;
+      });
+      setMachines((prev) => [...prev, ...newOnes]);
+      showToast(`${newOnes.length}機種をまとめて追加しました`);
+    });
+  };
 
   /* --- タグ --- */
   const addTag = () => {
@@ -3095,55 +3120,77 @@ function Settings({ players, setPlayers, shops, setShops, machines, setMachines,
       <div style={{ fontSize: 11, color: C.sub, margin: "-6px 2px 8px" }}>
         現行の実機スペック情報（ボーダー・機械割は各種攻略情報をもとにした参考値）から選んで追加できます
       </div>
-      <Card style={{ padding: 0 }}>
-        <div style={{ padding: 12, borderBottom: `1px solid ${C.line}` }}>
-          <input
-            value={presetQuery}
-            onChange={(e) => setPresetQuery(e.target.value)}
-            placeholder="機種名で検索（かな・カタカナどちらでも可）"
-            style={inputStyle}
-          />
-        </div>
-        {MACHINE_PRESETS[machineFilter]
-          .filter((p) => !presetQuery.trim() || normKana(p.name).includes(normKana(presetQuery)))
-          .map((p, i, arr) => {
-            const already = machines.some((m) => m.name === p.name);
-            return (
-              <div key={p.name} style={rowStyle(i === arr.length - 1)}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{p.name}</div>
-                  <div style={{ fontSize: 10, color: C.sub }}>
-                    {machineFilter === "pachinko"
-                      ? `ボーダー ${p.border} / 1Rトータル 1/${p.oneRProb} / 1R出玉 ${p.oneRDedama}玉`
-                      : `機械割 ${p.waris.filter((w) => num(w) > 0).join(" / ")}%`}
-                  </div>
-                  {p.note && <div style={{ fontSize: 10, color: C.sub, marginTop: 2 }}>{p.note}</div>}
-                </div>
-                <button
-                  onClick={() => addFromPreset(p, machineFilter)}
-                  disabled={already}
-                  style={{
-                    background: already ? C.panel2 : C.gold,
-                    color: already ? C.sub : "#1a1400",
-                    border: "none",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    padding: "8px 14px",
-                    cursor: already ? "default" : "pointer",
-                    marginLeft: 8,
-                    flexShrink: 0,
-                  }}
-                >
-                  {already ? "登録済み" : "追加"}
-                </button>
-              </div>
-            );
-          })}
-        {MACHINE_PRESETS[machineFilter].filter(
+      {(() => {
+        const filteredPresets = MACHINE_PRESETS[machineFilter].filter(
           (p) => !presetQuery.trim() || normKana(p.name).includes(normKana(presetQuery))
-        ).length === 0 && <div style={{ padding: 14, fontSize: 13, color: C.sub }}>該当する機種がありません</div>}
-      </Card>
+        );
+        return (
+          <Card style={{ padding: 0 }}>
+            <div style={{ padding: 12, borderBottom: `1px solid ${C.line}` }}>
+              <input
+                value={presetQuery}
+                onChange={(e) => setPresetQuery(e.target.value)}
+                placeholder="機種名で検索（かな・カタカナどちらでも可）"
+                style={inputStyle}
+              />
+              <button
+                onClick={() => addAllPresets(filteredPresets, machineFilter)}
+                style={{
+                  width: "100%",
+                  marginTop: 8,
+                  background: C.gold,
+                  color: "#1a1400",
+                  border: "none",
+                  borderRadius: 10,
+                  fontSize: 13,
+                  fontWeight: 800,
+                  padding: "11px 0",
+                  cursor: "pointer",
+                }}
+              >
+                表示中の{filteredPresets.length}機種をまとめて追加する
+              </button>
+            </div>
+            {filteredPresets.map((p, i, arr) => {
+              const already = machines.some((m) => m.name === p.name);
+              return (
+                <div key={p.name} style={rowStyle(i === arr.length - 1)}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{p.name}</div>
+                    <div style={{ fontSize: 10, color: C.sub }}>
+                      {machineFilter === "pachinko"
+                        ? `ボーダー ${p.border} / 1Rトータル 1/${p.oneRProb} / 1R出玉 ${p.oneRDedama}玉`
+                        : `機械割 ${p.waris.filter((w) => num(w) > 0).join(" / ")}%`}
+                    </div>
+                    {p.note && <div style={{ fontSize: 10, color: C.sub, marginTop: 2 }}>{p.note}</div>}
+                  </div>
+                  <button
+                    onClick={() => addFromPreset(p, machineFilter)}
+                    disabled={already}
+                    style={{
+                      background: already ? C.panel2 : C.gold,
+                      color: already ? C.sub : "#1a1400",
+                      border: "none",
+                      borderRadius: 8,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: "8px 14px",
+                      cursor: already ? "default" : "pointer",
+                      marginLeft: 8,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {already ? "登録済み" : "追加"}
+                  </button>
+                </div>
+              );
+            })}
+            {filteredPresets.length === 0 && (
+              <div style={{ padding: 14, fontSize: 13, color: C.sub }}>該当する機種がありません</div>
+            )}
+          </Card>
+        );
+      })()}
       </div>
     );
   }
